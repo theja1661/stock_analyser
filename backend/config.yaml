@@ -42,6 +42,9 @@ llm:
   backoff_base_seconds: 20   # 20s, 40s, 80s
   temperature: 0.2
   max_inline_mb: 18          # bigger document sets go through the Files API
+  timeout_seconds: 60
+  max_document_chars: 60000
+  max_pdf_chars: 40000
 
 sizing:
   num_picks: 3

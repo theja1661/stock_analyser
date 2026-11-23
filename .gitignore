@@ -8,3 +8,4 @@ data/*
 data/documents/*
 data/reports/*
 !data/**/.gitkeep
+.env

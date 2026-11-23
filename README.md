@@ -71,6 +71,10 @@ setx GEMINI_API_KEY "your-key"          # future sessions (open a new terminal a
 
 Without a key everything still runs, and every stock is treated as quant-only. The default model, `gemini-flash-latest`, is Google's alias for its current Flash model. Change `llm.model` to pin a specific version.
 
+### OpenRouter
+
+Set `OPENROUTER_API_KEY` in the project root `.env` file or in the process environment, then switch `llm.provider` to `openrouter` and set `llm.model`, for example `openrouter/free`. The provider uses OpenRouter's OpenAI-compatible API and requests JSON output. PDF files are text-extracted locally with `pypdf`; image-only/scanned PDFs require OCR before they can be analysed.
+
 ### Corporate network / TLS errors
 
 You may see `CertificateVerifyError` or `CERTIFICATE_VERIFY_FAILED`. That means your network re-signs HTTPS traffic. The default `network.ca_bundle: auto` handles this on Windows by building a CA bundle from the Windows certificate store into `data/.certs/`. On other systems, set it to the path of your company's root-CA PEM file.

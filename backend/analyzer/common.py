@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from dotenv import load_dotenv
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]   # stock_analyzer/backend
 ROOT_DIR = BACKEND_DIR.parent                        # stock_analyzer/
@@ -16,6 +17,8 @@ DATA_DIR = ROOT_DIR / "data"                         # runtime state (db, docume
 FRONTEND_DIR = ROOT_DIR / "frontend"
 CONFIG_FILE = BACKEND_DIR / "config.yaml"
 log = logging.getLogger("stock_analyzer")
+
+load_dotenv(ROOT_DIR / ".env")
 
 
 def load_config(path: str | Path = CONFIG_FILE) -> dict[str, Any]:

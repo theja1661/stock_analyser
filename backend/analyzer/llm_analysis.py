@@ -10,6 +10,7 @@ import hashlib
 import json
 import ssl
 import time
+import re
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any
@@ -126,7 +127,157 @@ class GeminiProvider(LLMProvider):
         return json.loads(resp.text)
 
 
-PROVIDERS: dict[str, type[LLMProvider]] = {"gemini": GeminiProvider}
+class OpenRouterProvider(LLMProvider):
+    name = "openrouter"
+
+    def __init__(self, cfg: dict[str, Any]):
+        super().__init__(cfg)
+        try:
+            from openai import OpenAI
+        except ImportError as e:
+            raise RuntimeError(
+                "The 'openai' package is required for OpenRouter. "
+                "Install backend/requirements.txt."
+            ) from e
+
+        api_key_env = cfg["llm"].get("api_key_env", "OPENROUTER_API_KEY")
+        api_key = getenv_required(api_key_env)
+        timeout = float(cfg["llm"].get("timeout_seconds", 60))
+        kwargs: dict[str, Any] = {
+            "api_key": api_key,
+            "base_url": "https://openrouter.ai/api/v1",
+            "timeout": timeout,
+            "max_retries": 0,
+        }
+        bundle = resolve_ca_bundle(cfg)
+        if bundle:
+            import httpx
+            kwargs["http_client"] = httpx.Client(
+                verify=ssl.create_default_context(cafile=bundle),
+                timeout=timeout,
+            )
+        self.client = OpenAI(**kwargs)
+        self.max_document_chars = int(cfg["llm"].get("max_document_chars", 60000))
+        self.max_pdf_chars = int(cfg["llm"].get("max_pdf_chars", 40000))
+
+    def _extract_pdf_text(self, path: Path) -> str:
+        try:
+            from pypdf import PdfReader
+        except ImportError as e:
+            raise RuntimeError(
+                "The 'pypdf' package is required to read PDF documents with OpenRouter. "
+                "Install backend/requirements.txt."
+            ) from e
+
+        try:
+            reader = PdfReader(str(path))
+        except Exception as e:
+            raise RuntimeError(f"{path.name}: PDF could not be read: {e}") from e
+        pages: list[str] = []
+        for page in reader.pages:
+            text = page.extract_text() or ""
+            if text.strip():
+                pages.append(text)
+        text = "\n\n".join(pages).strip()
+        if not text:
+            raise RuntimeError(
+                f"{path.name}: no text could be extracted. This PDF may be scanned; "
+                "OCR is required before OpenRouter can analyse it."
+            )
+        return text
+
+    def _documents_prompt(self, documents: list[Path]) -> str:
+        sections: list[str] = []
+        remaining = self.max_document_chars
+        for path in documents:
+            suffix = path.suffix.lower()
+            if suffix == ".pdf":
+                text = self._extract_pdf_text(path)
+                limit = min(self.max_pdf_chars, remaining)
+            elif suffix in (".txt", ".md"):
+                text = path.read_text(encoding="utf-8", errors="replace")
+                limit = remaining
+            else:
+                raise RuntimeError(f"{path.name}: unsupported document type '{suffix}'")
+
+            truncated = len(text) > limit
+            text = text[:limit]
+            header = f"--- Document: {path.name} ---"
+            if truncated:
+                warning = (
+                    f"\n[TRUNCATED: document text exceeded the configured limit "
+                    f"of {limit:,} characters]"
+                )
+                log.warning("    %s: text truncated to %s characters", path.name, limit)
+                text += warning
+            sections.append(f"{header}\n{text}")
+            remaining -= len(text)
+            if remaining <= 0:
+                if len(documents) > len(sections):
+                    warning = "\n[TRUNCATED: remaining documents omitted because the document limit was reached]"
+                    sections.append(warning)
+                    log.warning("    OpenRouter document prompt reached the %s-character limit", self.max_document_chars)
+                break
+        return "\n\n".join(sections)
+
+    def generate(self, prompt: str, documents: list[Path]) -> dict[str, Any]:
+        documents_prompt = self._documents_prompt(documents)
+        combined_prompt = (
+            f"{prompt}\n\n"
+            "Return exactly one valid JSON object matching this schema:\n"
+            f"{StockAnalysis.model_json_schema()}\n\n"
+            "Document contents:\n"
+            f"{documents_prompt}"
+        )
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": combined_prompt}],
+                temperature=float(self.cfg["llm"].get("temperature", 0.2)),
+                response_format={"type": "json_object"},
+            )
+        except Exception as e:
+            status = getattr(e, "status_code", None)
+            if status is None:
+                status = getattr(getattr(e, "response", None), "status_code", None)
+            message = str(e)
+            if status in (429, 500, 502, 503, 504):
+                raise RetryableError(f"HTTP {status}: {message}") from e
+            if status == 401 or "401" in message:
+                raise RuntimeError(
+                    f"OpenRouter authentication failed. Check {self.cfg['llm'].get('api_key_env', 'OPENROUTER_API_KEY')}."
+                ) from e
+            if status == 404 or "no endpoints found" in message.lower() or "model" in message.lower():
+                raise RuntimeError(f"Invalid or unavailable OpenRouter model '{self.model}': {message}") from e
+            raise RuntimeError(f"OpenRouter request failed: {message}") from e
+
+        try:
+            content = response.choices[0].message.content
+        except (AttributeError, IndexError):
+            content = None
+        if not content or not content.strip():
+            raise RuntimeError("Empty response returned by OpenRouter")
+
+        text = content.strip()
+        if text.startswith("```"):
+            text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
+            text = re.sub(r"\s*```$", "", text)
+        try:
+            raw = json.loads(text)
+        except json.JSONDecodeError as e:
+            raise RuntimeError(f"Invalid JSON returned by OpenRouter: {e}") from e
+
+        try:
+            validated = StockAnalysis.model_validate(raw)
+        except Exception as e:
+            raise RuntimeError(f"OpenRouter JSON does not match StockAnalysis: {e}") from e
+        return validated.model_dump()
+
+
+PROVIDERS: dict[str, type[LLMProvider]] = {
+    "gemini": GeminiProvider,
+    "openrouter": OpenRouterProvider,
+}
 
 
 def make_provider(cfg: dict[str, Any]) -> LLMProvider:
