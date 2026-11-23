@@ -18,7 +18,13 @@ FRONTEND_DIR = ROOT_DIR / "frontend"
 CONFIG_FILE = BACKEND_DIR / "config.yaml"
 log = logging.getLogger("stock_analyzer")
 
-load_dotenv(ROOT_DIR / ".env")
+
+def load_project_env() -> None:
+    """Load the project-root .env without replacing process environment variables."""
+    load_dotenv(dotenv_path=ROOT_DIR / ".env", override=False)
+
+
+load_project_env()
 
 
 def load_config(path: str | Path = CONFIG_FILE) -> dict[str, Any]:

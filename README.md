@@ -73,7 +73,16 @@ Without a key everything still runs, and every stock is treated as quant-only. T
 
 ### OpenRouter
 
-Set `OPENROUTER_API_KEY` in the project root `.env` file or in the process environment, then switch `llm.provider` to `openrouter` and set `llm.model`, for example `openrouter/free`. The provider uses OpenRouter's OpenAI-compatible API and requests JSON output. PDF files are text-extracted locally with `pypdf`; image-only/scanned PDFs require OCR before they can be analysed.
+The default remains Gemini. To switch to OpenRouter, set `OPENROUTER_API_KEY` in the project root `.env` file or in the process environment, then change `backend/config.yaml` to:
+
+```yaml
+llm:
+  provider: openrouter
+  model: openrouter/free
+  api_key_env: OPENROUTER_API_KEY
+```
+
+The application loads `<project root>/.env` automatically before provider initialization without replacing existing process environment variables. The provider uses OpenRouter's OpenAI-compatible API and requests JSON output. If a model rejects `response_format={"type":"json_object"}`, the provider retries once without that parameter and relies on the prompt plus Pydantic validation. PDF files are text-extracted locally with `pypdf`; image-only/scanned PDFs require OCR before they can be analysed.
 
 ### Corporate network / TLS errors
 

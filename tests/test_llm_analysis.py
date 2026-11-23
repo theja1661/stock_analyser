@@ -11,6 +11,7 @@ from unittest.mock import Mock, patch
 BACKEND = Path(__file__).resolve().parents[1] / "backend"
 sys.path.insert(0, str(BACKEND))
 
+import analyzer.common as common
 from analyzer.llm_analysis import (
     GeminiProvider,
     OpenRouterProvider,
@@ -56,6 +57,91 @@ class OpenRouterProviderTests(unittest.TestCase):
     def test_provider_registration(self):
         self.assertIs(PROVIDERS["gemini"], GeminiProvider)
         self.assertIs(PROVIDERS["openrouter"], OpenRouterProvider)
+
+    def test_default_config_is_gemini(self):
+        cfg = common.load_config(BACKEND / "config.yaml")
+        self.assertEqual(cfg["llm"]["provider"], "gemini")
+        self.assertEqual(cfg["llm"]["model"], "gemini-flash-latest")
+        self.assertEqual(cfg["llm"]["api_key_env"], "GEMINI_API_KEY")
+
+    def test_root_env_loading_is_safe(self):
+        with patch("analyzer.common.load_dotenv") as load_dotenv:
+            common.load_project_env()
+        load_dotenv.assert_called_once_with(
+            dotenv_path=common.ROOT_DIR / ".env",
+            override=False,
+        )
+
+    def test_root_env_loading_does_not_overwrite_process_variable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env_path = Path(directory) / ".env"
+            env_path.write_text("TEST_ENV_LOADING=from-file\n", encoding="utf-8")
+            with patch.object(common, "ROOT_DIR", Path(directory)):
+                os.environ["TEST_ENV_LOADING"] = "from-process"
+                common.load_project_env()
+        self.assertEqual(os.environ["TEST_ENV_LOADING"], "from-process")
+        os.environ.pop("TEST_ENV_LOADING", None)
+
+    def test_successful_json_response_format(self):
+        provider, client = self.provider_with_mock_client()
+        client.chat.completions.create.return_value = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content='''{
+                "thesis": "Strong growth",
+                "risks": [],
+                "red_flags": [],
+                "guidance_summary": "No guidance given",
+                "conviction": 7
+            }'''))]
+        )
+        result = provider.generate("prompt", [])
+        self.assertEqual(result["conviction"], 7)
+        kwargs = client.chat.completions.create.call_args.kwargs
+        self.assertEqual(kwargs["response_format"], {"type": "json_object"})
+        self.assertEqual(client.chat.completions.create.call_count, 1)
+
+    def test_response_format_falls_back_when_model_rejects_it(self):
+        provider, client = self.provider_with_mock_client()
+        unsupported = RuntimeError("response_format json_object is not supported")
+        unsupported.status_code = 400
+        valid = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content='''{
+                "thesis": "Strong growth",
+                "risks": ["Competition"],
+                "red_flags": [],
+                "guidance_summary": "No guidance given",
+                "conviction": 6
+            }'''))]
+        )
+        client.chat.completions.create.side_effect = [unsupported, valid]
+        result = provider.generate("prompt", [])
+        self.assertEqual(result["conviction"], 6)
+        self.assertEqual(client.chat.completions.create.call_count, 2)
+        self.assertIn("response_format", client.chat.completions.create.call_args_list[0].kwargs)
+        self.assertNotIn("response_format", client.chat.completions.create.call_args_list[1].kwargs)
+
+    def test_unrelated_http_error_does_not_trigger_fallback(self):
+        provider, client = self.provider_with_mock_client()
+        error = RuntimeError("provider connection failed")
+        error.status_code = 503
+        client.chat.completions.create.side_effect = error
+        with self.assertRaises(RetryableError):
+            provider.generate("prompt", [])
+        self.assertEqual(client.chat.completions.create.call_count, 1)
+
+    def test_fallback_response_is_pydantic_validated(self):
+        provider, client = self.provider_with_mock_client()
+        unsupported = RuntimeError("json_object response_format is unsupported")
+        unsupported.status_code = 400
+        invalid = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content='''{
+                "thesis": "Growth",
+                "risks": []
+            }'''))]
+        )
+        client.chat.completions.create.side_effect = [unsupported, invalid]
+        with self.assertRaisesRegex(RuntimeError, "StockAnalysis"):
+            provider.generate("prompt", [])
+        self.assertEqual(client.chat.completions.create.call_count, 2)
 
     def test_missing_api_key(self):
         os.environ.pop("TEST_OPENROUTER_API_KEY", None)

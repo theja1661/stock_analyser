@@ -229,13 +229,42 @@ class OpenRouterProvider(LLMProvider):
             "Document contents:\n"
             f"{documents_prompt}"
         )
+        request_kwargs: dict[str, Any] = {
+            "model": self.model,
+            "messages": [{"role": "user", "content": combined_prompt}],
+            "temperature": float(self.cfg["llm"].get("temperature", 0.2)),
+        }
+
+        def create_response(use_response_format: bool) -> Any:
+            kwargs = dict(request_kwargs)
+            if use_response_format:
+                kwargs["response_format"] = {"type": "json_object"}
+            return self.client.chat.completions.create(**kwargs)
+
         try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[{"role": "user", "content": combined_prompt}],
-                temperature=float(self.cfg["llm"].get("temperature", 0.2)),
-                response_format={"type": "json_object"},
-            )
+            try:
+                response = create_response(True)
+            except Exception as e:
+                status = getattr(e, "status_code", None)
+                if status is None:
+                    status = getattr(getattr(e, "response", None), "status_code", None)
+                message = str(e).lower()
+                unsupported_format = (
+                    status in (400, 422)
+                    and (
+                        "response_format" in message
+                        or "json_object" in message
+                        or "response format" in message
+                    )
+                )
+                if not unsupported_format:
+                    raise
+                log.warning(
+                    "    OpenRouter model %s does not support response_format; "
+                    "retrying with JSON requested in the prompt",
+                    self.model,
+                )
+                response = create_response(False)
         except Exception as e:
             status = getattr(e, "status_code", None)
             if status is None:

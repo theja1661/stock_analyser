@@ -32,19 +32,22 @@ screener:
     revenue_growth: 20       # last 4 quarters, higher is better
     profit_growth: 20        # last 4 quarters, higher is better
     momentum: 5              # 6-month price return
-
 llm:
   provider: gemini
-  model: gemini-flash-latest # alias for Google's current Flash-tier model
+  model: gemini-flash-latest
   api_key_env: GEMINI_API_KEY
-  delay_seconds: 15          # pause between API calls
-  max_retries: 3             # on HTTP 429 / 503
-  backoff_base_seconds: 20   # 20s, 40s, 80s
+  # To use OpenRouter, set:
+  # provider: openrouter
+  # model: openrouter/free
+  # api_key_env: OPENROUTER_API_KEY
+  delay_seconds: 15
+  max_retries: 2
+  backoff_base_seconds: 10
   temperature: 0.2
-  max_inline_mb: 18          # bigger document sets go through the Files API
   timeout_seconds: 60
   max_document_chars: 60000
   max_pdf_chars: 40000
+
 
 sizing:
   num_picks: 3

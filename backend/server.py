@@ -7,11 +7,8 @@ from __future__ import annotations
 import socket
 
 import uvicorn
-from dotenv import load_dotenv
-from pathlib import Path
 from analyzer.common import load_config
-ROOT_DIR = Path(__file__).resolve().parents[1]
-load_dotenv(ROOT_DIR / ".env")
+
 from api.app import app
 from api.auth import TOKEN, TOKEN_FILE
 
