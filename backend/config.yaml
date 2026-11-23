@@ -1,0 +1,56 @@
+# Stock analyzer configuration. Everything tunable lives here.
+
+budget: 6000                 # INR to deploy this week
+
+paths:                         # relative to the project root
+  universe_csv: backend/universe.csv   # ticker list (column: symbol, without .NS)
+  database: data/data.db
+  documents_dir: data/documents   # data/documents/<TICKER>/*.pdf|*.txt|*.md
+  reports_dir: data/reports
+
+ingestion:
+  exchange_suffix: ".NS"
+  cache_days: 3              # skip refetch if data is younger than this
+  request_delay_seconds: 1.0 # polite pause between tickers
+  momentum_period: "6mo"
+
+network:
+  # Corporate proxies that re-sign TLS traffic break yfinance/Gemini with
+  # certificate errors. "auto" builds a CA bundle from the Windows certificate
+  # store (+ certifi) when running on Windows. Use a file path to supply your
+  # own bundle, or null to use library defaults.
+  ca_bundle: auto
+
+screener:
+  max_price: 2000            # hard filter: affordability
+  min_quarters: 3            # hard filter: of the last 4 quarters
+  top_n: 15
+  weights:                   # relative weights; need not sum to 100
+    valuation: 20            # P/E vs sector median (lower is better)
+    roe: 20                  # higher is better
+    debt_to_equity: 15       # lower is better
+    revenue_growth: 20       # last 4 quarters, higher is better
+    profit_growth: 20        # last 4 quarters, higher is better
+    momentum: 5              # 6-month price return
+
+llm:
+  provider: gemini
+  model: gemini-flash-latest # alias for Google's current Flash-tier model
+  api_key_env: GEMINI_API_KEY
+  delay_seconds: 15          # pause between API calls
+  max_retries: 3             # on HTTP 429 / 503
+  backoff_base_seconds: 20   # 20s, 40s, 80s
+  temperature: 0.2
+  max_inline_mb: 18          # bigger document sets go through the Files API
+
+sizing:
+  num_picks: 3
+  quant_weight: 0.5          # final = 0.5 * quant + 0.5 * conviction*10
+  llm_weight: 0.5
+  min_analyzed_for_picks: 3  # below this, quant-only stocks may fill slots
+  topup_leftover: true       # spend leftover cash on extra shares...
+  max_position_pct: 45       # ...without any position passing this % of budget
+
+web:
+  host: 0.0.0.0              # 0.0.0.0 = reachable from your phone on the same Wi-Fi; 127.0.0.1 = this PC only
+  port: 8000
